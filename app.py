@@ -2,11 +2,25 @@ import streamlit as st
 import joblib
 import numpy as np
 import pandas as pd
-import shap
-import matplotlib.pyplot as plt
 
 # ---------------- CONFIG ----------------
 st.set_page_config(page_title="Churn Analytics Pro", layout="wide")
+
+# ---------------- STYLING ----------------
+st.markdown("""
+<style>
+.main {
+    background-color: #0E1117;
+}
+.stButton>button {
+    background-color: #00C897;
+    color: white;
+    border-radius: 10px;
+    height: 3em;
+    width: 100%;
+}
+</style>
+""", unsafe_allow_html=True)
 
 # ---------------- LOGIN SYSTEM ----------------
 USERNAME = "admin"
@@ -34,24 +48,6 @@ if not st.session_state.login:
 # ---------------- LOAD MODEL ----------------
 model = joblib.load("churn_model.pkl")
 
-# ---------------- LOAD DATA ----------------
-try:
-    df = pd.read_csv("Telco-Customer-Churn.csv")
-except:
-    st.warning("⚠ Dataset not found. Upload CSV or place file in project folder.")
-    df = None
-
-if df is not None:
-    df.drop("customerID", axis=1, inplace=True, errors='ignore')
-
-    df["TotalCharges"] = pd.to_numeric(df["TotalCharges"], errors="coerce")
-    df.fillna(df.mean(numeric_only=True), inplace=True)
-
-    for col in df.select_dtypes(include="object").columns:
-        df[col] = df[col].astype("category").cat.codes
-
-    X = df.drop("Churn", axis=1, errors='ignore')
-
 # ---------------- SIDEBAR ----------------
 st.sidebar.title("📊 Navigation")
 
@@ -66,84 +62,103 @@ st.markdown(
     "<h1 style='color:#00FFAA;'>🚀 Churn Analytics Pro</h1>",
     unsafe_allow_html=True
 )
-st.markdown("---")
+st.markdown("### 🧠 AI-Powered Customer Risk Intelligence")
+st.divider()
 
 # ---------------- DASHBOARD ----------------
 if page == "🏠 Dashboard":
 
-    if df is not None:
-        st.subheader("📊 Key Metrics")
-
+    try:
+        df = pd.read_csv("Telco-Customer-Churn.csv")
         total_customers = len(df)
-        churn_rate = df['Churn'].mean() * 100
+        churn_rate = df['Churn'].value_counts(normalize=True).get("Yes", 0) * 100
+
+        st.subheader("📊 Key Metrics")
 
         c1, c2 = st.columns(2)
         c1.metric("Total Customers", total_customers)
         c2.metric("Churn Rate", f"{churn_rate:.2f}%")
 
-        st.markdown("---")
+        st.divider()
 
         st.subheader("📉 Churn Distribution")
         st.bar_chart(df['Churn'].value_counts())
-    else:
-        st.info("Upload dataset to view dashboard.")
+
+    except:
+        st.warning("Upload dataset to view dashboard.")
 
 # ---------------- PREDICTION ----------------
 elif page == "📈 Prediction":
 
-    st.subheader("🔮 Predict Customer Churn")
+    st.subheader("👤 Customer Information")
 
-    tenure = st.slider("Tenure", 0, 72, 12)
-    monthly = st.slider("Monthly Charges", 0, 150, 70)
+    with st.form("customer_form"):
 
-    if st.button("🚀 Predict"):
+        col1, col2 = st.columns(2)
 
-        # Input
+        with col1:
+            customer_id = st.text_input("Customer ID", "CUST001")
+            tenure = st.slider("Tenure (months)", 0, 72, 12)
+            contract = st.selectbox("Contract Type", ["Month-to-month", "One year", "Two year"])
+
+        with col2:
+            monthly = st.slider("Monthly Charges", 0, 150, 70)
+            internet = st.selectbox("Internet Service", ["DSL", "Fiber optic", "No"])
+            payment = st.selectbox("Payment Method", [
+                "Electronic check",
+                "Mailed check",
+                "Bank transfer",
+                "Credit card"
+            ])
+
+        submitted = st.form_submit_button("🚀 Analyze Customer")
+
+    if submitted:
+
+        # ⚠️ CURRENT MODEL USES ONLY 2 FEATURES
         input_data = np.array([[tenure, monthly]])
 
-        # Prediction
         prediction = model.predict(input_data)
 
-        # Probability
         if hasattr(model, "predict_proba"):
             prob = model.predict_proba(input_data)[0][1]
         else:
             prob = np.random.uniform(0.1, 0.9)
 
-        st.write("### 📊 Prediction Result")
+        st.divider()
+        st.subheader("📊 Risk Analysis Dashboard")
 
-        col1, col2 = st.columns(2)
+        col1, col2, col3 = st.columns(3)
 
-        if prediction[0] == 1:
-            col1.error("⚠ High Churn Risk")
-        else:
-            col1.success("✅ Customer Safe")
-
+        col1.metric("Customer ID", customer_id)
         col2.metric("Churn Probability", f"{prob*100:.2f}%")
 
+        risk = "Low 🟢"
+        if prob > 0.6:
+            risk = "High 🔴"
+        elif prob > 0.3:
+            risk = "Medium 🟡"
+
+        col3.metric("Risk Level", risk)
+
+        # Progress bar
+        st.progress(int(prob * 100))
+
+        # Alert
+        if prob > 0.6:
+            st.error("🔴 High Risk Customer - Immediate action required!")
+        elif prob > 0.3:
+            st.warning("🟡 Medium Risk - Monitor customer closely")
+        else:
+            st.success("🟢 Customer is Safe")
+
         # Chart
-        prob_df = pd.DataFrame({
+        chart_data = pd.DataFrame({
             "Status": ["Stay", "Churn"],
             "Probability": [1-prob, prob]
         })
-        st.bar_chart(prob_df.set_index("Status"))
 
-        # ---------------- SHAP ----------------
-        if df is not None:
-            st.markdown("---")
-            st.subheader("🧠 Model Explanation (SHAP)")
-
-            try:
-                explainer = shap.TreeExplainer(model)
-                shap_values = explainer.shap_values(X)
-
-                fig, ax = plt.subplots(figsize=(8, 4))
-                shap.summary_plot(shap_values, X, plot_type="bar", show=False)
-
-                st.pyplot(fig)
-                plt.clf()
-            except Exception as e:
-                st.warning("SHAP not supported for this model.")
+        st.bar_chart(chart_data.set_index("Status"))
 
 # ---------------- ABOUT ----------------
 else:
@@ -152,14 +167,13 @@ else:
 
     st.write("""
     ### 📌 Project Overview
-    This project predicts customer churn using Machine Learning models.
+    AI-powered churn prediction system with interactive dashboard.
 
-    ### ⚙ Technologies Used
-    - Python
+    ### ⚙ Technologies
     - Streamlit
+    - Machine Learning
     - Scikit-learn
-    - SHAP
 
-    ### 🎯 Objective
-    To identify customers likely to churn and improve retention.
+    ### 🎯 Goal
+    Help businesses reduce customer churn using predictive analytics.
     """)
